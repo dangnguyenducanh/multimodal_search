@@ -9,6 +9,11 @@ from mmsearch.esci import ESCI, RUNS
 from mmsearch.metrics import by_slice, mean_ci, paired_bootstrap
 
 BASELINE_RUN = ("p0", "zr-c123-r12")   # the ZR 5-member ensemble; every run is compared with it once it exists
+BASELINE_4 = ("p0", "zr-c123-r1")      # until r2 exists (Phase 0 stage 3 runs last), the 4-member ensemble is the bar
+
+
+def baseline_run():
+    return BASELINE_RUN if (RUNS / BASELINE_RUN[0] / BASELINE_RUN[1] / "per_query.parquet").exists() else BASELINE_4
 
 
 @lru_cache(maxsize=1)
@@ -39,9 +44,10 @@ def write_run(phase, run, per_query, splits, slices, *, args=None, models=None, 
                    "slices": {c: by_slice(dev, slices.loc[dev_q, c]) for c in slices.columns}},
            "vs_baseline": None, "test": None, "gpu_hours": gpu_hours, "ms_per_query": ms_per_query, "notes": notes}
 
-    base = load_per_query(*BASELINE_RUN)
-    if base is not None and (phase, run) != BASELINE_RUN:
-        rec["vs_baseline"] = paired_bootstrap(base.reindex(dev_q), dev)
+    bl = baseline_run()
+    base = load_per_query(*bl)
+    if base is not None and (phase, run) != bl:
+        rec["vs_baseline"] = {"baseline": "/".join(bl), **paired_bootstrap(base.reindex(dev_q), dev)}
     if report_test:
         test = per_query.reindex(splits.index[splits == "final_test"])
         if test.isna().any():

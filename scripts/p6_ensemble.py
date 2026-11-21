@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from mmsearch.ensemble import expected_gain, fit_weights, greedy_prune, rank_norm, weighted, zr_score  # noqa: E402
 from mmsearch.esci import RUNS, load_pairs  # noqa: E402
 from mmsearch.metrics import ndcg_per_query, paired_bootstrap  # noqa: E402
-from mmsearch.runlog import load_per_query, write_run  # noqa: E402
+from mmsearch.runlog import baseline_run, load_per_query, write_run  # noqa: E402
 
 ZR_TO_OURS = [1, 3, 0, 2]      # their prob columns (C, E, I, S) -> ours (E, S, C, I)
 
@@ -96,25 +96,26 @@ def main():
     slices = pd.read_parquet(RUNS / "p0" / "slices.parquet")
     tables = member_tables()
     t, raw = tables["dev"]
-    if len(raw) < 5:
-        sys.exit(f"Phase 0 ZR members missing ({sorted(raw)}); run after the Phase 0 queue finishes")
+    if not {"c1", "c2", "c3", "r1"} <= set(raw):
+        sys.exit(f"Phase 0 ZR members missing ({sorted(raw)}); needs at least c1-c3 + r1 (Phase 0 stages 1-2)")
+    regs = [m for m in ["r1", "r2"] if m in raw]          # r2 comes from Phase 0 stage 3, which runs last
     ours = [r for r in a.ours.split(",") if r]
     images = [r for r in a.images.split(",") if r]
     bags = [r for r in a.bags.split(",") if r]
     add_ours(tables, ours + images + bags)
     t, raw = tables["dev"]
-    zr_cols = [f"zr_{m}" for m in ["c1", "c2", "c3", "r1", "r2"]]
+    zr_cols = [f"zr_{m}" for m in ["c1", "c2", "c3", *regs]]
     col = lambda rs: [f"{r.split('/')[0]}:{r.split('/')[1]}" for r in rs]       # noqa: E731
 
     stages = []
-    s0 = zr_score([raw[m] for m in ["c1", "c2", "c3"]], [raw[m] for m in ["r1", "r2"]])
-    base_pq = load_per_query("p0", "zr-c123-r12")
+    s0 = zr_score([raw[m] for m in ["c1", "c2", "c3"]], [raw[m] for m in regs])
+    base_pq = load_per_query(*baseline_run())
     pq0 = nd(t, s0)
     assert np.allclose(pq0.sort_index().to_numpy(), base_pq.reindex(pq0.index).sort_index().to_numpy(), atol=1e-9), \
         "stage 0 does not reproduce the Phase 0 baseline"
-    stages.append(("stage0-zr", zr_cols, pq0, "ZR sort_key_4 over the 5 Phase 0 members (= the baseline)"))
+    stages.append(("stage0-zr", zr_cols, pq0, f"ZR sort_key_4 over the Phase 0 members c1-c3 + {'+'.join(regs)} (= the baseline)"))
     c_eg = expected_gain(np.mean([raw[m][:, ZR_TO_OURS] for m in ["c1", "c2", "c3"]], axis=0))
-    s1 = rank_norm(c_eg, t["query_id"]) + rank_norm(np.mean([raw["r1"][:, 0], raw["r2"][:, 0]], axis=0), t["query_id"])
+    s1 = rank_norm(c_eg, t["query_id"]) + rank_norm(np.mean([raw[m][:, 0] for m in regs], axis=0), t["query_id"])
     stages.append(("stage1-expected-gain", zr_cols, nd(t, s1), "expected gain + mean regression, rank-normalised"))
     cands = [("stage2-fitted-weights", zr_cols, "coordinate-ascent weights over the 5 ZR members"),
              ("stage3-family-diversity", zr_cols + col(ours), "+ our Phase 4 models"),
@@ -184,10 +185,10 @@ def main():
     elif final in ("stage0-zr", "stage1-expected-gain"):       # fixed formulas: apply them as they are
         _, rt = tables["final_test"]
         if final == "stage0-zr":
-            st = zr_score([rt[m] for m in ["c1", "c2", "c3"]], [rt[m] for m in ["r1", "r2"]])
+            st = zr_score([rt[m] for m in ["c1", "c2", "c3"]], [rt[m] for m in regs])
         else:
             ceg = expected_gain(np.mean([rt[m][:, ZR_TO_OURS] for m in ["c1", "c2", "c3"]], axis=0))
-            st = rank_norm(ceg, tt["query_id"]) + rank_norm(np.mean([rt["r1"][:, 0], rt["r2"][:, 0]], axis=0), tt["query_id"])
+            st = rank_norm(ceg, tt["query_id"]) + rank_norm(np.mean([rt[m][:, 0] for m in regs], axis=0), tt["query_id"])
     else:
         w = cv_weights(t, members)[1]
         st = weighted(tt, members, w)

@@ -29,7 +29,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 RUNS = ROOT / "runs"  # not mmsearch.esci.RUNS: importing mmsearch with MMS_GPU_GB set touches the GPU
-ZR_RUN = "p0/zr-c123-r12"
+ZR_RUN = "p0/zr-c123-r12" if (RUNS / "p0" / "zr-c123-r12" / "per_query.parquet").exists() else "p0/zr-c123-r1"
 MM_RUNS = ["p5/caption-field", "p5/image-in-head"]
 SPLITS = ["dev", "final_test"]
 ZR_TO_OURS = [1, 3, 0, 2]  # their prob columns (C, E, I, S) -> ours (E, S, C, I), as scripts/p6_ensemble.py
@@ -74,16 +74,17 @@ def zr_pairs(pred):
     from mmsearch.ensemble import zr_score
     out = []
     for split in SPLITS:
-        files = {m: pred / f"member_{m}_{split}.parquet" for m in ["c1", "c2", "c3", "r1", "r2"]}
+        regs = ["r1", "r2"] if (pred / f"member_r2_{split}.parquet").exists() else ["r1"]   # r2 = stage 3, last
+        files = {m: pred / f"member_{m}_{split}.parquet" for m in ["c1", "c2", "c3", *regs]}
         if not all(f.exists() for f in files.values()):
-            print(f"zr: skip {split} (not all 5 members in {pred})")
+            print(f"zr: skip {split} (members missing in {pred})")
             continue
         d = {m: pd.read_parquet(f) for m, f in files.items()}
         base = d["c1"][["query_id", "product_id"]]
         assert all(o[["query_id", "product_id"]].equals(base) for o in d.values()), f"zr {split}: rows not aligned"
         cls = [d[m].filter(like="s").to_numpy() for m in ["c1", "c2", "c3"]]
         p = np.mean(np.stack([c.astype(np.float32) for c in cls]), axis=0)[:, ZR_TO_OURS]
-        out.append(base.assign(score=zr_score(cls, [d[m].filter(like="s").to_numpy() for m in ["r1", "r2"]]),
+        out.append(base.assign(score=zr_score(cls, [d[m].filter(like="s").to_numpy() for m in regs]),
                                pE=p[:, 0], pS=p[:, 1], pC=p[:, 2], pI=p[:, 3]))
     return pd.concat(out, ignore_index=True) if out else None
 

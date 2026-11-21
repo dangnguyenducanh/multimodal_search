@@ -67,7 +67,10 @@ def main():
         per_split[split] = (df, {m: o.filter(like="s").to_numpy() for m, o in outs.items()})
 
     report = {}
-    for name, cs, rs, logged in ROWS:
+    # the baseline row is the 5-member ensemble once r2 exists, else c1-c3 + r1 (stage 3 runs last); it goes first
+    # so every other row gets vs_baseline, and it is the only one scored on final test
+    base_name = "zr-c123-r12" if "r2" in per_split.get("dev", (None, {}))[1] else "zr-c123-r1"
+    for name, cs, rs, logged in sorted(ROWS, key=lambda r: r[0] != base_name):
         if not all(m in per_split.get("dev", (None, {}))[1] for m in cs + rs):
             continue
         pq, parity = [], {}
@@ -107,7 +110,7 @@ def main():
         print(name, json.dumps(row), flush=True)
         if not a.no_write:
             full = "final_test" in per_split and all(m in per_split["final_test"][1] for m in cs + rs)
-            write_run("p0", name, per_query, splits, slices, report_test=(name == BASELINE_RUN[1] and full),
+            write_run("p0", name, per_query, splits, slices, report_test=(name == base_name and full),
                       args={"classifiers": cs, "regressors": rs, "their_public_lb": logged, **extra, "parity": parity},
                       models=[str(models / m) for m in cs + rs], gpu_hours=round(gpu_h, 2),
                       ms_per_query=round(1000 * dev_s / 2000, 1) if dev_s else None,
