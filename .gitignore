@@ -1,0 +1,11 @@
+data/
+runs/
+third_party/
+.claude/
+.pytest_cache/
+.ruff_cache/
+web/dist/
+__pycache__/
+*.egg-info/
+.ipynb_checkpoints/
+node_modules/
