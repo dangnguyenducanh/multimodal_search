@@ -2,7 +2,8 @@
 # Phase 0 §0.4–0.6, the whole run order, resumable (a member is done when its train_time.json exists):
 #   1. c1 + r1 -> score    2. c2, c3 -> score    3. f23..f89 -> their confident-learning filter -> r2 -> score
 # fp16 through accelerate's own MIXED_PRECISION switch: 2.7x faster than their fp32 in the smoke run (deviation,
-# logged in RESULTS.md). Run in the background:  nohup scripts/p0_zr_queue.sh > runs/p0/zr_logs/queue.log 2>&1 &
+# logged in RESULTS.md). Stages so the project queue (scripts/run_all.sh) can interleave other GPU work:
+#   scripts/p0_zr_queue.sh 1|2|3   (no argument = all three)
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd); cd "$ROOT"
 ZPY=$HOME/miniconda3/envs/zr/bin/python
@@ -24,8 +25,10 @@ score() {
   "$OPY" scripts/p0_score_zr.py
 }
 
-train c1; train r1; score
-train c2; train c3; score
+stage=${1:-all}
+if [[ $stage == 1 || $stage == all ]]; then train c1; train r1; score; fi
+if [[ $stage == 2 || $stage == all ]]; then train c2; train c3; score; fi
+[[ $stage == 3 || $stage == all ]] || exit 0
 
 for f in 23 45 67 89; do
   if ! done_ "f$f"; then

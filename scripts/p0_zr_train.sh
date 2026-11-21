@@ -86,7 +86,7 @@ export HF_DATASETS_CACHE=$ROOT/runs/p0/hf_datasets_cache
 start=$(date +%s)
 echo "[$(date '+%F %T')] $member mode=$mode train=$train valid=$valid bs=$bs accum=$accum precision=${MIXED_PRECISION:-no}" | tee "$log"
 cd "$src"
-"$PY" run_glue_no_trainer.py \
+"$PY" "$ROOT/scripts/gpu_cap_run.py" run_glue_no_trainer.py \
   --model_name_or_path "${MODEL:-$ROOT/runs/p0/hf/xlm-roberta-large}" \
   --max_length 256 --pad_to_max_length \
   --per_device_train_batch_size "$bs" --per_device_eval_batch_size "$bs" \

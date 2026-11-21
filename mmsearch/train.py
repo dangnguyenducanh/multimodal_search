@@ -323,14 +323,17 @@ def adversarial_step(model, b, cfg, scaler, reg, cls, running_loss):
         emb = model.enc.get_input_embeddings().weight
         if emb.grad is None:
             return None
-        g = emb.grad.float()
+        g = emb.grad
         norm = g.norm()
-        if norm == 0 or torch.isnan(norm):
+        if norm == 0 or not torch.isfinite(norm):
             return None
-        backup = emb.data.clone()
-        emb.data.add_((cfg.fgm * g / norm).to(emb.dtype))
+        # Same update as ZR's FGM (eps * g / ||g||), applied to and backed up for only the rows the batch touched:
+        # the 250k-token table makes full-size copies cost ~0.7 GB (base) / 1 GB (large) each under the 25 GB budget.
+        rows = torch.nonzero(g.abs().sum(1)).squeeze(1)
+        backup = emb.data[rows].clone()
+        emb.data[rows] += (cfg.fgm / norm) * g[rows].to(emb.dtype)
         out = run_loss(model, b, cfg, scaler)
-        emb.data.copy_(backup)
+        emb.data[rows] = backup
         return out
     if cfg.rdrop > 0 and cls is not None:        # plain R-Drop: a second dropout pass
         return run_loss(model, b, cfg, scaler)

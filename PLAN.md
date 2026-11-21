@@ -72,3 +72,10 @@ Dev comes from test because only 260 train queries have images for ≥ 90% of th
 0 (scorer → ZR baseline) → 1 → 4.0 (our reimplementation, parity at proxy) → 2 (switches at proxy) → 4.1 ladder
 (pseudo-labels use BM25 candidates until Phase 7 exists) → 3 (if time) → 4.2 full scale → 5 → 6 → 7 → 8 → 9 → 10.
 Each phase starts from the previous phase's dev winner, and every winner is reported against the ZR baseline.
+
+**GPU budget (user rule, 2026-11-21): the whole project uses at most 25 GB of the shared card.** All GPU work runs in
+one resumable queue, `scripts/run_all.sh`, one job at a time, each hard-capped at 24 GB (`MMS_GPU_GB`, enforced as
+PyTorch's per-process memory fraction). The queue interleaves the phases so results arrive early: retrieval and
+caption jobs → ZR c1 + r1 → the Phase 4 ladder (Phase 1 pool and Phase 2 switches included) → ZR c2, c3 → Phase 3 →
+distillation and pseudo-labels → ladder tail → Phase 5 → Phase 8 → retrieval end-to-end → ZR folds, filter, r2 →
+Phase 4.2 full scale → Phase 6 → demo tables (Phase 9). About 5–6 days of GPU time; `runs/run_all.log` shows progress.

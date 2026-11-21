@@ -62,6 +62,10 @@ def main():
         p = path(m)
         return (p / "pytorch_model.bin").exists() and ((p / "train_time.json").exists() or m in alias)
 
+    import torch
+    if torch.cuda.is_available() and os.environ.get("MMS_GPU_GB"):     # project GPU budget (25 GB in total)
+        torch.cuda.set_per_process_memory_fraction(
+            min(1.0, float(os.environ["MMS_GPU_GB"]) * 2**30 / torch.cuda.get_device_properties(0).total_memory))
     ro = setup_predictor()
     import numpy as np
     import pandas as pd

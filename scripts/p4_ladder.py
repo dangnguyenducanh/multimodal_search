@@ -99,13 +99,15 @@ def parity():
                             f"local_dir='{hf}', allow_patterns=['config.json','pytorch_model.bin','sentencepiece.bpe.model',"
                             "'tokenizer.json','tokenizer_config.json'])"], check=True)
         env = {**os.environ, "MODEL": str(hf), "TRAIN": str(d / "train.csv"), "VALID": str(d / "valid.csv"),
-               "NAME": "proxy_r1", "MIXED_PRECISION": "fp16"}
+               "NAME": "proxy_r1", "MIXED_PRECISION": "fp16",
+               "PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:128"}       # ZR env = torch 2.0
         if not (RUNS / "p0" / "zr_models" / "proxy_r1" / "train_time.json").exists():
             subprocess.run(["bash", "scripts/p0_zr_train.sh", "r1"], cwd=ROOT, env=env, check=True)
         out = RUNS / "p4" / theirs
         subprocess.run([ZPY, "scripts/p0_zr_infer.py", "--eval", "--members", "r1", "--alias", "r1=proxy_r1",
                         "--out", str(out), "--splits", "dev"], cwd=ROOT, check=True,
-                       env={**os.environ, "PYTHONNOUSERSITE": "1", "PYTHONHASHSEED": "12345"})
+                       env={**os.environ, "PYTHONNOUSERSITE": "1", "PYTHONHASHSEED": "12345",
+                            "PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:128"})
         m = pd.read_parquet(out / "member_r1_dev.parquet")
         ex = load_examples(["query_id", "product_id", "product_locale", "esci_label", "small_version", "split"])
         lab = task1_us_test(ex)[["query_id", "product_id", "esci_label"]].rename(columns={"esci_label": "label"})
