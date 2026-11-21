@@ -18,7 +18,7 @@ multimodal_search/
 │                            7 retrieval, 8 recommendations, 9 backend, 10 frontend)
 ├── third_party/zr/      ✅ ZhichunRoad's repo @ 301bb98, cloned for the Phase 0 baseline; no license → gitignored, never edited
 ├── DATASETS.md          ✅ dataset research; ESCI chosen
-├── RESULTS.md           P0  one row per run: dev nDCG ± CI, gain vs best, GPU-hours, ms/query
+├── RESULTS.md         ✅ generated from runs/*/*/metrics.json (scripts/update_results.py): dev nDCG ± CI, gain vs ZR, GPU-h, ms/query
 ├── pyproject.toml       P0  dependencies; `pip install -e .`
 ├── .gitignore           ✅ keeps data/, runs/ and third_party/ out of git
 │
@@ -28,23 +28,23 @@ multimodal_search/
 │   └── images/          P2  product photos fetched from SQID URLs
 │
 ├── mmsearch/               the library; scripts/ and app/ import from here
-│   ├── metrics.py       P0  nDCG (E=1, S=0.1, C=0.01, I=0), Recall@k, MRR, F1, paired bootstrap
-│   ├── esci.py          P0  split() · P1 joins, query-hash folds, sample weights
+│   ├── metrics.py     ✅ P0  nDCG (E=1, S=0.1, C=0.01, I=0), Recall@k, MRR, F1, paired bootstrap
+│   ├── esci.py        ✅ P0  split(), query_slices() · P1 joins, query-hash folds, sample weights
 │   ├── text.py          P2  cleaning, product-text formats A/B, field orders, vocabularies
 │   ├── augment.py       P2  translation, C/I rebalancing, confident-learning filter
 │   ├── pretrain.py      P3  masked words + Product2Query + brand/color heads
 │   ├── model.py         P4  cross-encoder, 4-class + regression heads, extra-feature block (P5: image block)
 │   ├── train.py         P4  training loop: self-distillation, label smoothing, AWP/FGM, R-Drop, EMA
-│   ├── ensemble.py      P0  zr_score() (ZR's formula, parity-checked) · P6 expected gain, weights, stacking, pruning
+│   ├── ensemble.py    ✅ P0  zr_score() (ZR's formula, parity-checked) · P6 expected gain, weights, stacking, pruning
 │   ├── retrieval.py     P7  BM25, text vectors, CLIP image vectors, rank fusion (FAISS)
 │   └── recs.py          P8  alternatives (P(S)) and goes-with (P(C))
 │
 ├── scripts/                one entry point per phase step, each writes runs/<phase>/<run>/
-│   └── p0_check_harness.py, p0_zr_data.py, p0_zr_train.sh, p0_zr_infer.py, p0_score_zr.py … p9_export.py
+│   └── ✅ p0_check_harness.py, p0_zr_data.py, p0_zr_train.sh, p0_zr_queue.sh, p0_zr_infer.py, p0_score_zr.py, update_results.py … p9_export.py
 │
 ├── runs/                   everything generated: tables, embeddings, checkpoints, predictions, metrics.json
 ├── tests/
-│   └── test_metrics.py  P0  metrics checked against hand-computed cases
+│   └── test_metrics.py ✅ P0  metrics checked against hand-computed cases
 ├── app/                 ✅ FastAPI backend (BM25 only until training; docs/demo-handoff.md)
 └── web/                 ✅ React + Vite + TS frontend, live at https://esci-mmsearch.vercel.app
 ```

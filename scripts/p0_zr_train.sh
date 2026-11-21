@@ -29,6 +29,23 @@ log=$ROOT/runs/p0/zr_logs/$name.log
 mkdir -p "$(dirname "$log")" "$(dirname "$src")" "$out"
 rm -rf "$src"; cp -r "$ZR/$task" "$src"
 
+if [[ $task == code_task2 ]]; then
+  # Their code_task2 imports RobertaWithSampleWeight, but the repo has no 4-class copy of it there. Their evaluation
+  # copy is that class with the training loss left commented out; switch on the line they used ('ce-poly-1' on the
+  # labels). The 'mixed' half of that comment needs logits this class no longer returns, so it stays off.
+  cp "$ZR/code_evaluation/task1/RobertaWithSampleWeight.py" "$src/"
+  PYTHONNOUSERSITE=1 "$PY" - "$src/RobertaWithSampleWeight.py" <<'EOF'
+import sys
+p = sys.argv[1]; s = open(p).read()
+old = ("        # if labels is not None:\n"
+       "        #     origin_loss = util_loss_fct(logits, labels, sample_weights, self.num_labels, loss_name='ce-poly-1')\n")
+new = ("        if labels is not None:\n"
+       "            loss = util_loss_fct(logits, labels, sample_weights, self.num_labels, loss_name='ce-poly-1')\n")
+assert s.count(old) == 1
+open(p, "w").write(s.replace(old, new))
+EOF
+fi
+
 ORDER=default; [[ $member == c2 ]] && ORDER=ptbdbc; [[ $member == c3 ]] && ORDER=ptdbbc
 DATA=$DATA ORDER=$ORDER CACHE=$ROOT/runs/p0/hf_cache PYTHONNOUSERSITE=1 "$PY" - "$src/run_glue_no_trainer.py" <<'EOF'
 import os, re, sys

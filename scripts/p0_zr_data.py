@@ -23,6 +23,9 @@ LABEL_WORD = {"E": "exact", "S": "substitute", "C": "complement", "I": "irreleva
 COLS = ["query_id", "query", "query_locale", "product_id", "esci_label", "product_title", "product_brand",
         "product_color_name", "product_bullet_point", "product_description"]
 MAX_CHARS = 4000     # per text field; ≥ 256 tokens of any language, so the 256-token inputs are unchanged
+# They trained on all 3 locales. The measured run (7.6 s/step on the shared GPU) put the 9 models at ~120 GPU-hours,
+# over docs/0.md's ~100 h rule, whose first cut is the ES/JP rows (-30%). Phase 1 tests US vs US+ES/JP properly.
+TRAIN_LOCALES = ["us"]
 N_VALID_Q = 2000     # their validation file, capped (docs/0.md §0.3)
 
 
@@ -72,8 +75,8 @@ def capped(d, n=N_VALID_Q):
 
 def write(d, path):
     d.to_csv(path, index=False, encoding="utf8")
-    print(f"{path.relative_to(RUNS)}: {len(d):,} rows, {d['query_id'].nunique():,} queries, "
-          f"{path.stat().st_size / 1e9:.2f} GB", flush=True)
+    q = f", {d['query_id'].nunique():,} queries" if "query_id" in d else ""
+    print(f"{path.relative_to(RUNS)}: {len(d):,} rows{q}, {path.stat().st_size / 1e9:.2f} GB", flush=True)
 
 
 def main():
@@ -111,11 +114,12 @@ def main():
             q = splits.index[splits == name]
             write(their_format(test[test["query_id"].isin(q)], products)[COLS[:5]], OUT / f"{name}.csv")
         cat = products[products["product_id"].isin(test["product_id"]) & (products["product_locale"] == "us")]
-        write(cat.assign(query_id=0), OUT / "catalogue_test.csv")
+        write(cat, OUT / "catalogue_test.csv")
         write_vocab(load_products(["product_brand", "product_color"]))
 
     if a.folds:
         tr = train_rows(ex)
+        tr = tr[tr["product_locale"].isin(TRAIN_LOCALES)]
         part = tr["query"].map(lambda q: hash(str(q)) % 10)   # their 1_query_hash.py
         tr = their_format(tr, products).assign(part=part.to_numpy())
         tr = tr.sample(frac=1, random_state=12345).reset_index(drop=True)
