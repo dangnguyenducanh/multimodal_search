@@ -88,7 +88,8 @@ def main():
                                  "ndcg_zr_score": float(pq[-1].mean())}
                 if not same:
                     raise SystemExit(f"zr_score() does not reproduce their ranking on {split}")
-                pq[-1] = theirs_ndcg          # the headline number is their file's
+                # per-query numbers use zr_score with the project's tie-break (product_id), like every other run;
+                # their file breaks exact ties by input order, so the two can differ only on exact ties (logged).
         per_query = pd.concat(pq)
         members = cs + rs + (["f23", "f45", "f67", "f89"] if "r2" in rs else [])
         gpu_h = sum(train_s.get(m, 0) for m in members) / 3600

@@ -96,7 +96,7 @@ def main():
         res[f"reranker_{pcol}+image"] = metrics(t, fused, lab)
         # reference: ZR's P(S|query) over the same candidates (uses the query; not item-to-item)
         zr = RUNS / "p0" / "zr_pred" / "member_c1_dev.parquet"
-        if zr.exists():
+        if all((RUNS / "p0" / "zr_pred" / f"member_{m}_dev.parquet").exists() for m in ["c1", "c2", "c3"]):
             zp = np.mean([pd.read_parquet(RUNS / "p0" / "zr_pred" / f"member_{m}_dev.parquet").set_index(["query_id", "product_id"])
                           .filter(like="s").to_numpy() for m in ["c1", "c2", "c3"]], axis=0)
             idx = pd.read_parquet(zr)[["query_id", "product_id"]]

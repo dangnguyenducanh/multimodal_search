@@ -14,6 +14,9 @@ IMAGES = ROOT / "data" / "images"
 def _clip(device="cuda"):
     import torch
     from transformers import CLIPModel, CLIPProcessor
+
+    from mmsearch import cap_gpu
+    cap_gpu()
     model = CLIPModel.from_pretrained(CLIP, dtype=torch.float16).to(device).eval()
     return model, CLIPProcessor.from_pretrained(CLIP)
 

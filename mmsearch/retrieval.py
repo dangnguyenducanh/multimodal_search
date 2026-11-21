@@ -64,7 +64,7 @@ class BM25:
 
 # ---- dense ----------------------------------------------------------------------------------------------------
 def encode(model, texts, batch=256, query=False):
-    pre = BGE_PREFIX if query and "bge" in str(getattr(model, "name_or_path", model)) else ""
+    pre = BGE_PREFIX if query else ""             # every dense model here is bge (base or fine-tuned with the prefix)
     return model.encode([pre + t for t in texts], batch_size=batch, normalize_embeddings=True,
                         convert_to_numpy=True, show_progress_bar=False).astype(np.float16)
 

@@ -91,12 +91,13 @@ def main():
     report = json.loads(path.read_text()) if path.exists() else {}
     report["text_run"] = text_run
     v = a.variants.split(",")
-    if "A" in v:
-        variant_a(text_run, report)
+    # trained variants first (GPU in child processes only), then A (GPU in this process) -> never two at once
     if "B" in v:
         variant_trained("caption-field", {"order": "caption"}, text_run, best_over, report)
     if "C" in v:
         variant_trained("image-in-head", {"image": True}, text_run, best_over, report)
+    if "A" in v:
+        variant_a(text_run, report)
     path.write_text(json.dumps(report, indent=1, default=str))
     import update_results  # noqa: E402
     update_results.main()

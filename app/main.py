@@ -5,13 +5,13 @@ from fastapi.responses import FileResponse
 from app import errors
 from app.config import WEB_DIST
 from app.errors import ApiError
-from app.routers import meta, products, search
+from app.routers import compare, meta, products, search
 
 
 def create_app() -> FastAPI:
     app = FastAPI(title="multimodal_search demo", version="0.1.0")
     errors.install(app)
-    for r in (search.router, products.router, meta.router):
+    for r in (search.router, products.router, meta.router, compare.router):
         app.include_router(r, prefix="/api")
 
     @app.get("/api/{path:path}", include_in_schema=False)

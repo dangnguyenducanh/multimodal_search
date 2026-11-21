@@ -40,6 +40,11 @@ def get_db() -> Iterator[sqlite3.Connection]:
         con.close()
 
 
+def has_table(db: sqlite3.Connection, name: str) -> bool:
+    """Model tables (pair_scores, recs) exist only after scripts/p9_add_models.py has run."""
+    return db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone() is not None
+
+
 def product_by_id(db: sqlite3.Connection, product_id: str) -> sqlite3.Row:
     row = db.execute("SELECT * FROM products WHERE product_id = ?", (product_id,)).fetchone()
     if row is None:

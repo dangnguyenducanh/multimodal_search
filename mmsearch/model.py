@@ -35,10 +35,14 @@ class CrossEncoder(nn.Module):
         self.dense = nn.Linear(h + extra, h)
         self.out_reg = nn.Linear(h, 1) if head in ("reg", "both") else None
         self.out_cls = nn.Linear(h, 4) if head in ("cls", "both") else None
-        for m in [self.dense, self.out_reg, self.out_cls]:
+        std = self.enc.config.initializer_range                 # ZR's post_init: N(0, 0.02) for every new layer
+        for m in [self.dense, self.out_reg, self.out_cls, getattr(self, "img", None)]:
             if m is not None:
-                nn.init.normal_(m.weight, std=self.enc.config.initializer_range)
+                nn.init.normal_(m.weight, std=std)
                 nn.init.zeros_(m.bias)
+        for e in [getattr(self, n, None) for n in ("brand", "color", "bags")]:
+            if e is not None:
+                nn.init.normal_(e.weight, std=std)
 
     def forward(self, input_ids, attention_mask, brand_idx=None, color_idx=None, bag_ids=None, bag_offsets=None,
                 img=None, has_img=None):

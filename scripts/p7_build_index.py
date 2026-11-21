@@ -159,7 +159,9 @@ def evaluate():
     names = ["bm25", "bge-small"] + [n for n in ["bge-small-ft", "bge-small-distill"] if Path(MODELS[n]).exists()] + ["clip-image"]
     for n in names:
         lists[n], lat[n] = run_lists(n, p, qs)
-    best_dense = names[-2]
+    dense = [n for n in names if n.startswith("bge")]
+    rel_e_map = rel_e.to_dict()
+    best_dense = max(dense, key=lambda n: np.nanmean([recall(lists[n][q], rel_e_map.get(q, []), 100) for q in qs["query_id"]]))
     combos = {"bm25+dense": ["bm25", best_dense], "bm25+dense+image": ["bm25", best_dense, "clip-image"]}
     for c, parts in combos.items():
         lists[c] = {q: rrf([lists[x][q] for x in parts], top=1000) for q in qs["query_id"]}
@@ -174,8 +176,13 @@ def evaluate():
     for n in per:
         if n != "bm25":
             rep["runs"][n]["vs_bm25_recall@100"] = paired_bootstrap(per["bm25"], per[n].reindex(per["bm25"].index).fillna(0))
-    winner = max(rep["runs"], key=lambda n: rep["runs"][n]["recall@100_E"])
-    rep["winner"] = winner
+    # The image index can only hold products with a photo URL: SQID's are the judged TEST products (+ some train
+    # products), so image retrieval searches a pool that already contains the answers. Its recall is optimistic;
+    # it is reported but cannot win, and the end-to-end run uses bm25+dense.
+    for n in rep["runs"]:
+        rep["runs"][n]["optimistic_image_pool"] = "image" in n
+    rep["winner"] = max((n for n in rep["runs"] if "image" not in n), key=lambda n: rep["runs"][n]["recall@100_E"])
+    rep["best_dense"] = best_dense
     # HNSW for serving: recall vs exact search at efSearch values, on the winning dense model
     if best_dense in rep["runs"]:
         import faiss
@@ -204,7 +211,7 @@ def evaluate():
     print(json.dumps(rep, indent=1, default=str))
 
 
-def end_to_end(rerank_run, combo="bm25+dense+image"):
+def end_to_end(rerank_run, combo="bm25+dense"):
     """Retrieve top 100 -> rerank -> drop unjudged -> nDCG@10 ('condensed list'), vs the same reranker on the
     judged list. The gap is what retrieval loses."""
     from mmsearch.train import predict_run
@@ -214,7 +221,8 @@ def end_to_end(rerank_run, combo="bm25+dense+image"):
     qs = dev.drop_duplicates("query_id")[["query_id", "query"]]
     lists = {}
     names = combo.split("+")
-    best_dense = [n for n in ["bge-small-distill", "bge-small-ft", "bge-small"] if (P7 / f"lists_{n}.parquet").exists()][0]
+    best_dense = rep.get("best_dense") or [n for n in ["bge-small-distill", "bge-small-ft", "bge-small"]
+                                           if (P7 / f"lists_{n}.parquet").exists()][0]
     for n in names:
         n = best_dense if n == "dense" else ("clip-image" if n == "image" else n)
         lists[n] = run_lists(n, p, qs)[0]
@@ -226,7 +234,16 @@ def end_to_end(rerank_run, combo="bm25+dense+image"):
     lab = dev[["query_id", "product_id", "label"]]
     judged = cand.merge(lab, on=["query_id", "product_id"], how="inner")         # condensed list
     full = predict_run("p4", rerank_run, "dev")
-    e2e = ndcg_per_query(judged, k=10).reindex(qs["query_id"]).fillna(0)
+    # nDCG@10 of the retrieved+reranked list, with the IDEAL taken from the query's FULL judged list, so judged
+    # products that retrieval missed count against it (a condensed list alone would hide them).
+    from mmsearch.metrics import GAIN
+    ideal = lab.assign(g=lab["label"].map(GAIN)).sort_values(["query_id", "g"], ascending=[True, False])
+    ideal["r"] = ideal.groupby("query_id").cumcount()
+    idcg = ideal[ideal["r"] < 10].assign(d=lambda d: d["g"] / np.log2(d["r"] + 2)).groupby("query_id")["d"].sum()
+    got = judged.sort_values(["query_id", "score", "product_id"], ascending=[True, False, True]).copy()
+    got["r"] = got.groupby("query_id").cumcount()
+    dcg = got[got["r"] < 10].assign(d=lambda d: d["label"].map(GAIN) / np.log2(d["r"] + 2)).groupby("query_id")["d"].sum()
+    e2e = (dcg.reindex(qs["query_id"]).fillna(0) / idcg.reindex(qs["query_id"])).fillna(0)
     ref = ndcg_per_query(full, k=10).reindex(qs["query_id"])
     rep["e2e"] = {"rerank_run": rerank_run, "retriever": combo, "ndcg@10_condensed": float(e2e.mean()),
                   "ndcg@10_judged_list": float(ref.mean()), "retrieval_loss": paired_bootstrap(ref, e2e),
@@ -244,6 +261,8 @@ def main():
     ap.add_argument("--e2e", default="")
     a = ap.parse_args()
     P7.mkdir(parents=True, exist_ok=True)
+    from mmsearch import cap_gpu
+    cap_gpu()
     if a.build:
         p = corpus()
         t0 = time.time()

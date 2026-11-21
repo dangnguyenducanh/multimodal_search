@@ -57,6 +57,33 @@ class ModelInfo(BaseModel):
     dev_ndcg: float | None
     ci: list[float] | None
     test_ndcg: float | None
+    ms_per_query: float | None = None
+
+
+class CompareItem(Product):
+    human_label: Label
+    zr_rank: int
+    ours_rank: int
+    zr_score: float
+    ours_score: float
+
+
+class CompareModels(BaseModel):
+    zr: str
+    ours: str
+
+
+class CompareNdcg(BaseModel):
+    zr: float
+    ours: float
+
+
+class CompareResponse(BaseModel):
+    query: str
+    query_id: int
+    models: CompareModels
+    items: list[CompareItem]  # ordered by ours_rank
+    ndcg: CompareNdcg
 
 
 class Example(BaseModel):

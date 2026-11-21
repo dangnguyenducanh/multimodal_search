@@ -1,7 +1,7 @@
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useApi } from "@/api/client";
-import type { Example, HitList, Mode, Product, SearchResponse } from "@/types/api";
-import { ErrorBanner, Header, Loading, ModelFooter, ResultsGrid, Sidebar } from "@/components";
+import type { CompareResponse, Example, HitList, Mode, Product, SearchResponse } from "@/types/api";
+import { CompareCard, ErrorBanner, Header, Loading, ModelFooter, ResultsGrid, Sidebar } from "@/components";
 
 const HERO_QUERY = "women sunglasses"; // only picks the poster photos
 
@@ -116,6 +116,11 @@ export function SearchPage() {
               judged for it.
             </div>
           )}
+          {data && data.matched_query_id !== null && (
+            <div className="banner info">
+              <Link to={`/compare?q=${encodeURIComponent(q)}`}>Compare with the ZR baseline →</Link>
+            </div>
+          )}
           {error && <ErrorBanner error={error} />}
           {loading && !data && <Loading />}
           {data && data.items.length === 0 && (
@@ -123,6 +128,73 @@ export function SearchPage() {
           )}
           {data && <ResultsGrid items={data.items} scoreLabel={data.reranker ? "score" : "bm25"} />}
         </div>
+      </main>
+      <ModelFooter />
+    </>
+  );
+}
+
+export function ComparePage() {
+  const [params] = useSearchParams();
+  const q = params.get("q") ?? "";
+  const { data, error, loading } = useApi<CompareResponse>(q ? `/api/compare?q=${encodeURIComponent(q)}` : null);
+  const diff = data ? data.ndcg.ours - data.ndcg.zr : 0;
+  const zrOrder = data ? [...data.items].sort((a, b) => a.zr_rank - b.zr_rank) : [];
+  const oursOrder = data ? [...data.items].sort((a, b) => a.ours_rank - b.ours_rank) : [];
+
+  return (
+    <>
+      <Header query={q} />
+      <main className="container">
+        <div className="section-head">
+          <h2 className="section-title">Baseline vs ours: “{q}”</h2>
+          {q && <Link to={`/search?q=${encodeURIComponent(q)}`}>Back to results →</Link>}
+        </div>
+        {!q && <p className="muted pad">Pick a real ESCI query to compare: <a href="/#queries">see the list</a>.</p>}
+        {error?.code === "NO_BASELINE_FOR_QUERY" ? (
+          <p className="muted pad">
+            No baseline scores for this query yet. Compare works on judged dev/test ESCI queries;{" "}
+            <a href="/#queries">try one from the list</a>.
+          </p>
+        ) : (
+          error && <ErrorBanner error={error} />
+        )}
+        {loading && !data && <Loading />}
+        {data && (
+          <>
+            <div className="ndcg-bar">
+              <span>
+                ZR baseline <small className="muted">({data.models.zr})</small> nDCG <b>{data.ndcg.zr.toFixed(4)}</b>
+              </span>
+              <span>
+                Ours <small className="muted">({data.models.ours})</small> nDCG <b>{data.ndcg.ours.toFixed(4)}</b>
+              </span>
+              <span className={diff > 0 ? "tag-gained" : diff < 0 ? "tag-lost" : "muted"}>
+                difference <b>{diff >= 0 ? "+" : "−"}{Math.abs(diff).toFixed(4)}</b>{" "}
+                ({diff > 0 ? "we gain" : diff < 0 ? "we lose" : "tie"})
+              </span>
+              <span className="muted small">{data.items.length} judged products · gains E 1 · S 0.1 · C 0.01 · I 0</span>
+            </div>
+            <div className="compare">
+              <section aria-labelledby="col-zr">
+                <h3 id="col-zr" className="box-title">ZR baseline order</h3>
+                <ol className="ccol">
+                  {zrOrder.map((it) => (
+                    <CompareCard key={it.product_id} item={it} side="zr" />
+                  ))}
+                </ol>
+              </section>
+              <section aria-labelledby="col-ours">
+                <h3 id="col-ours" className="box-title">Our order</h3>
+                <ol className="ccol">
+                  {oursOrder.map((it) => (
+                    <CompareCard key={it.product_id} item={it} side="ours" />
+                  ))}
+                </ol>
+              </section>
+            </div>
+          </>
+        )}
       </main>
       <ModelFooter />
     </>

@@ -48,8 +48,8 @@ def build_examples(variant, n_products, seed=0):
                                           "p2q": (p["label"] == "E").astype(int).to_numpy()})], ignore_index=True)
     brands = f["brand"].str.lower().str.strip()
     colors = f["color"].str.lower().str.strip()
-    bv = {b: i for i, b in enumerate(brands.value_counts()[lambda s: s >= 5].index)}
-    cv = {c: i for i, c in enumerate(colors.value_counts()[lambda s: s >= 5].index)}
+    bv = {b: i for i, b in enumerate(brands[brands != ""].value_counts()[lambda s: s >= 5].index)}   # empty = ignore
+    cv = {c: i for i, c in enumerate(colors[colors != ""].value_counts()[lambda s: s >= 5].index)}
     doc_brand = dict(zip(text, [bv.get(b, -100) for b in brands]))
     doc_color = dict(zip(text, [cv.get(c, -100) for c in colors]))
     ex["brand"] = ex["doc"].map(doc_brand).fillna(-100).astype(int)
@@ -85,6 +85,8 @@ class MultiTask(nn.Module):
 def run(variant="cheap", backbone="FacebookAI/xlm-roberta-base", n_products=200_000, max_len=256, batch=8,
         accum=16, lr=2e-5, epochs=1, seed=0):
     from transformers import AutoTokenizer, DataCollatorForLanguageModeling, get_linear_schedule_with_warmup
+    from mmsearch import cap_gpu
+    cap_gpu()
     out = RUNS / "p3" / variant
     out.mkdir(parents=True, exist_ok=True)
     torch.manual_seed(seed)

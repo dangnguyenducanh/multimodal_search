@@ -128,7 +128,10 @@ def oof_runs(best_over):
     over = {**best_over, "head": "both" if best_over.get("head", "reg") == "reg" else best_over["head"]}
     parts = []
     for k in range(3):
-        n = train(over, {"name": f"{name_of(best_over)}-oof{k}", "oof": [3, k], "eval_splits": []})
+        n = f"{name_of(best_over)}-oof{k}"
+        if not (RUNS / "p4" / n / "scores_oof.parquet").exists():      # OOF runs write no metrics.json
+            subprocess.run([PY, "-m", "mmsearch.train", json.dumps({**over, "name": n, "oof": [3, k], "eval_splits": []})],
+                           cwd=ROOT, check=True)
         parts.append(pd.read_parquet(RUNS / "p4" / n / "scores_oof.parquet"))
     oof = pd.concat(parts, ignore_index=True)
     path = RUNS / "p4" / "oof_probs.parquet"

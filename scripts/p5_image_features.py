@@ -76,6 +76,8 @@ if __name__ == "__main__":
     ap.add_argument("--captions", action="store_true")
     a = ap.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
+    from mmsearch import cap_gpu
+    cap_gpu()
     if a.clip:
         clip_features()
     if a.captions:

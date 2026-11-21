@@ -80,8 +80,9 @@ def cv_stack(t, members, n=5):
         tr = t.iloc[a].sort_values("query_id")
         m = lgb.LGBMRanker(objective="lambdarank", label_gain=[0, 1, 10, 100], num_leaves=15, min_data_in_leaf=50,
                            learning_rate=0.05, n_estimators=200, verbose=-1)
-        m.fit(tr[members], lab.loc[tr.index], group=tr.groupby("query_id", sort=False).size().to_numpy())
-        out[b] = m.predict(t.iloc[b][members])
+        # numpy, not the DataFrame: LightGBM rejects feature names with ':' or ',' (our run names have both)
+        m.fit(tr[members].to_numpy(), lab.loc[tr.index], group=tr.groupby("query_id", sort=False).size().to_numpy())
+        out[b] = m.predict(t.iloc[b][members].to_numpy())
     return out
 
 
@@ -178,8 +179,15 @@ def main():
         tr = t.sort_values("query_id")
         m = lgb.LGBMRanker(objective="lambdarank", label_gain=[0, 1, 10, 100], num_leaves=15, min_data_in_leaf=50,
                            learning_rate=0.05, n_estimators=200, verbose=-1)
-        m.fit(tr[members], lab.loc[tr.index], group=tr.groupby("query_id", sort=False).size().to_numpy())
-        st = m.predict(tt[members])
+        m.fit(tr[members].to_numpy(), lab.loc[tr.index], group=tr.groupby("query_id", sort=False).size().to_numpy())
+        st = m.predict(tt[members].to_numpy())
+    elif final in ("stage0-zr", "stage1-expected-gain"):       # fixed formulas: apply them as they are
+        _, rt = tables["final_test"]
+        if final == "stage0-zr":
+            st = zr_score([rt[m] for m in ["c1", "c2", "c3"]], [rt[m] for m in ["r1", "r2"]])
+        else:
+            ceg = expected_gain(np.mean([rt[m][:, ZR_TO_OURS] for m in ["c1", "c2", "c3"]], axis=0))
+            st = rank_norm(ceg, tt["query_id"]) + rank_norm(np.mean([rt["r1"][:, 0], rt["r2"][:, 0]], axis=0), tt["query_id"])
     else:
         w = cv_weights(t, members)[1]
         st = weighted(tt, members, w)

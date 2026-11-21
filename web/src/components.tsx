@@ -2,7 +2,7 @@ import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useApi } from "@/api/client";
 import type { ApiError } from "@/api/client";
-import type { Example, Label, ModelInfo, ProductHit } from "@/types/api";
+import type { CompareItem, Example, Label, ModelInfo, ProductHit } from "@/types/api";
 
 export const LABELS: Record<Label, string> = { E: "Exact", S: "Substitute", C: "Complement", I: "Irrelevant" };
 const REASON: Record<Example["reason"], string> = { gained: "images helped", lost: "images hurt", random: "random" };
@@ -100,6 +100,54 @@ export function ProductCard({ hit, scoreLabel }: { hit: ProductHit; scoreLabel: 
   );
 }
 
+/** How a product moved from ZR's rank to ours: text + aria-label, colour is only a hint. */
+export function RankMove({ zr, ours }: { zr: number; ours: number }) {
+  const d = zr - ours;
+  const [cls, text, aria] =
+    d > 0
+      ? ["up", `▲ up ${d}`, `moved up ${d} vs the ZR baseline`]
+      : d < 0
+        ? ["down", `▼ down ${-d}`, `moved down ${-d} vs the ZR baseline`]
+        : ["same", "= same", "same rank as the ZR baseline"];
+  return (
+    <span className={`move move-${cls}`} role="img" aria-label={aria}>
+      {text}
+    </span>
+  );
+}
+
+/** One row in a Compare column: rank, image, title, human label; ours side shows the move vs ZR. */
+export function CompareCard({ item, side }: { item: CompareItem; side: "zr" | "ours" }) {
+  const rank = side === "zr" ? item.zr_rank : item.ours_rank;
+  const score = side === "zr" ? item.zr_score : item.ours_score;
+  return (
+    <li>
+      <Link to={`/product/${item.product_id}`} className="ccard">
+        <span className="crank">#{rank}</span>
+        <span className="ccard-img">
+          {item.image_url ? (
+            <img src={item.image_url} alt={item.title ?? ""} loading="lazy" referrerPolicy="no-referrer" />
+          ) : (
+            <span className="noimg">no image</span>
+          )}
+        </span>
+        <span className="ccard-body">
+          <span className="title">{item.title}</span>
+          <span className="badges">
+            <LabelBadge label={item.human_label} kind="human" />
+            {side === "ours" ? (
+              <RankMove zr={item.zr_rank} ours={item.ours_rank} />
+            ) : (
+              <span className="moved">ours #{item.ours_rank}</span>
+            )}
+            <span className="moved">score {score.toFixed(3)}</span>
+          </span>
+        </span>
+      </Link>
+    </li>
+  );
+}
+
 export function ResultsGrid({ items, scoreLabel }: { items: ProductHit[]; scoreLabel: string }) {
   return (
     <div className="grid">
@@ -168,6 +216,7 @@ export function ModelFooter() {
                   {m.name} ({m.role}): dev nDCG {m.dev_ndcg?.toFixed(4) ?? "–"}
                   {m.ci && ` [${m.ci[0].toFixed(4)}, ${m.ci[1].toFixed(4)}]`}
                   {m.test_ndcg !== null && ` · test ${m.test_ndcg.toFixed(4)}`}
+                  {m.ms_per_query != null && ` · ${m.ms_per_query.toFixed(1)} ms/query`}
                 </li>
               ))}
             </ul>

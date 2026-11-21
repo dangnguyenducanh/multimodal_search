@@ -17,7 +17,7 @@ import pandas as pd
 import torch
 import torch.nn.functional as F
 
-from mmsearch.esci import RUNS, load_p1_products, load_pairs
+from mmsearch.esci import RUNS, load_pairs
 from mmsearch.metrics import ndcg_per_query
 from mmsearch.model import CrossEncoder
 from mmsearch.text import budget_fields, mark_brands, product_fields, product_text
@@ -72,6 +72,17 @@ class Cfg:
     max_rows: int = 0               # smoke tests
 
 
+def product_table():
+    """All locales, keyed by 'product_id|locale' (the same ASIN has different text per locale)."""
+    p = pd.read_parquet(RUNS / "p1" / "products.parquet")
+    return p.set_index(p["product_id"] + "|" + p["product_locale"])
+
+
+def pkeys(rows):
+    loc = rows["locale"] if "locale" in rows else "us"
+    return rows["product_id"] + "|" + loc
+
+
 def norm_key(s):                    # ZR's vocab key normalisation
     return str(s).translate(str.maketrans("\n", " ", string.punctuation)).lower().strip() if s else ""
 
@@ -94,7 +105,7 @@ class Data:
 
     def __init__(self, cfg, rows, tok, products, fields_cache, image_store=None):
         self.n = len(rows)
-        f = fields_cache.loc[rows["product_id"]].reset_index(drop=True)
+        f = fields_cache.loc[pkeys(rows)].reset_index(drop=True)
         if cfg.budget:
             f = budget_fields(f, tok, cfg.budget)
         sep = f" {tok.sep_token}{tok.sep_token} " if tok.sep_token == "</s>" else f" {tok.sep_token} "
@@ -111,7 +122,11 @@ class Data:
         self.lens = np.array([len(x) for x in self.ids])
         self.label = rows["label"].map({l: i for i, l in enumerate(LABELS)}).to_numpy() if "label" in rows else None
         self.weight = rows["weight"].to_numpy(np.float32) if "weight" in rows else np.ones(self.n, np.float32)
-        soft = rows[["pE", "pS", "pC", "pI"]].to_numpy(np.float32) if "pE" in rows else None
+        soft = None
+        if "pE" in rows and self.label is not None:      # rows without soft targets (e.g. next to pseudo-labels): one-hot
+            soft = rows[["pE", "pS", "pC", "pI"]].to_numpy(np.float32)
+            onehot = np.eye(4, dtype=np.float32)[self.label]
+            soft = np.where(np.isnan(soft).any(1, keepdims=True), onehot, soft)
         self.soft = soft
         self.qid = rows["query_id"].to_numpy()
         if cfg.side:
@@ -156,7 +171,9 @@ def brands_for_markers(products):
     global _BRANDS
     if _BRANDS is None:
         vc = products["product_brand"].dropna().str.strip().str.lower().value_counts()
-        _BRANDS = [b for b in vc[vc >= 20].index if len(b) >= 3 and b.isascii()]
+        words = load_pairs(splits_=("train",))["query"].str.lower().str.split().explode().value_counts()
+        common = set(words.head(500).index)          # 'not', 'case', 'cat' are also brands; don't tag them
+        _BRANDS = [b for b in vc[vc >= 20].index if len(b) >= 3 and b.isascii() and b not in common]
     return _BRANDS
 
 
@@ -168,27 +185,25 @@ def train_rows(cfg):
     if cfg.oof:
         n, k = cfg.oof
         p = p[p["fold"] % n != k]
-    extra = []
-    if cfg.rebalance:
-        from mmsearch.augment import rebalance
-        f = product_fields(load_p1_products().set_index("product_id").loc[p["product_id"].unique()], cfg.clean)
-        extra.append(rebalance(p, f, keep_title=cfg.rebalance == "zr_title"))
-    if cfg.pseudo:
-        ps = pd.read_parquet(cfg.pseudo)
-        ps = ps.assign(weight=0.3, split="train")
-        extra.append(ps)
-    if cfg.filter_drop:
+    if cfg.filter_drop:                          # before rebalancing, so dropped C/I rows don't come back as copies
         d = pd.read_parquet(cfg.filter_drop)
         key = set(zip(d["query_id"], d["product_id"]))
         p = p[[k not in key for k in zip(p["query_id"], p["product_id"])]]
-    p = pd.concat([p] + extra, ignore_index=True) if extra else p.reset_index(drop=True)
-    if cfg.distill:
+    if cfg.distill:                              # 0.7 one-hot + 0.3 out-of-fold probs, on the judged rows only
         oof = pd.read_parquet(cfg.distill)[["query_id", "product_id", "pE", "pS", "pC", "pI"]]
         p = p.merge(oof, on=["query_id", "product_id"], how="left")
         onehot = pd.get_dummies(p["label"]).reindex(columns=list(LABELS), fill_value=0).to_numpy(np.float32)
         probs = p[["pE", "pS", "pC", "pI"]].to_numpy(np.float32)
-        probs = np.where(np.isnan(probs), onehot, probs)
-        p[["pE", "pS", "pC", "pI"]] = 0.7 * onehot + 0.3 * probs
+        p[["pE", "pS", "pC", "pI"]] = 0.7 * onehot + 0.3 * np.where(np.isnan(probs), onehot, probs)
+    extra = []
+    if cfg.rebalance:
+        from mmsearch.augment import rebalance
+        f = product_fields(product_table(), cfg.clean).loc[pkeys(p).unique()]
+        f.index = f.index.str.split("|").str[0]
+        extra.append(rebalance(p, f, keep_title=cfg.rebalance == "zr_title"))
+    if cfg.pseudo:                               # soft targets already in pE..pI
+        extra.append(pd.read_parquet(cfg.pseudo).assign(weight=0.3, split="train"))
+    p = pd.concat([p] + extra, ignore_index=True) if extra else p.reset_index(drop=True)
     if cfg.max_rows:
         p = p.sample(min(cfg.max_rows, len(p)), random_state=0)
     return p.reset_index(drop=True)
@@ -198,7 +213,8 @@ def eval_rows(split, cfg):
     if split == "oof":
         n, k = cfg.oof
         p = load_pairs(locales=("us",), splits_=("train",))
-        return p[(p["fold"] % n == k) & ((p["small_version"] == 1) | ~cfg.data.startswith("task1"))].reset_index(drop=True)
+        keep = (p["small_version"] == 1) if cfg.data.startswith("task1") else np.ones(len(p), bool)
+        return p[(p["fold"] % n == k) & keep].reset_index(drop=True)
     p = load_pairs(splits_=(split,))
     if cfg.max_rows:
         p = p[p["query_id"].isin(p["query_id"].drop_duplicates().head(50))]
@@ -329,7 +345,7 @@ def adversarial_step(model, b, cfg, scaler, reg, cls, running_loss):
             return None
         # Same update as ZR's FGM (eps * g / ||g||), applied to and backed up for only the rows the batch touched:
         # the 250k-token table makes full-size copies cost ~0.7 GB (base) / 1 GB (large) each under the 25 GB budget.
-        rows = torch.nonzero(g.abs().sum(1)).squeeze(1)
+        rows = torch.unique(b["x"]["input_ids"])            # the only rows with a gradient (no full-size temporaries)
         backup = emb.data[rows].clone()
         emb.data[rows] += (cfg.fgm / norm) * g[rows].to(emb.dtype)
         out = run_loss(model, b, cfg, scaler)
@@ -380,8 +396,20 @@ def to_scores(rows, reg, p, cfg):
     return df
 
 
+def fields_for(cfg, *row_sets):
+    """Product table (all locales, keyed product_id|locale) + cleaned fields for the products in these rows."""
+    products = product_table()
+    pr = products.loc[pd.Index(pd.concat([pkeys(r) for r in row_sets]).unique())]
+    if cfg.order == "caption":
+        caps = pd.read_parquet(RUNS / "p5" / "captions.parquet").set_index("product_id")["caption"]
+        pr = pr.assign(caption=caps.reindex(pr["product_id"]).fillna("").to_numpy())
+    return products, product_fields(pr, cfg.clean)
+
+
 def run(cfg, write=True):
-    from transformers import AutoTokenizer, get_linear_schedule_with_warmup
+    from transformers import AutoTokenizer, get_cosine_schedule_with_warmup
+    from mmsearch import cap_gpu
+    cap_gpu()
     from mmsearch.runlog import write_run
     torch.manual_seed(cfg.seed)
     rng = np.random.default_rng(cfg.seed)
@@ -391,17 +419,9 @@ def run(cfg, write=True):
     (out / "cfg.json").write_text(json.dumps(asdict(cfg), indent=1))
     t0 = time.time()
     tok = AutoTokenizer.from_pretrained(cfg.backbone)
-    products = load_p1_products().set_index("product_id")
     rows = train_rows(cfg)
-    need = pd.Index(rows["product_id"].unique())
     evals = {s: eval_rows(s, cfg) for s in cfg.eval_splits + (["oof"] if cfg.oof else [])}
-    for e in evals.values():
-        need = need.union(pd.Index(e["product_id"].unique()))
-    pr = products.loc[need]
-    if cfg.order == "caption":
-        caps = pd.read_parquet(RUNS / "p5" / "captions.parquet").set_index("product_id")["caption"]
-        pr = pr.assign(caption=caps.reindex(pr.index).fillna(""))
-    fields = product_fields(pr, cfg.clean)
+    products, fields = fields_for(cfg, rows, *evals.values())
     store = None
     if cfg.image:
         from mmsearch.images import image_store
@@ -417,10 +437,10 @@ def run(cfg, write=True):
 
     model = CrossEncoder(cfg.backbone, cfg.head, cfg.side, cfg.msd, cfg.wpool, cfg.bag,
                          768 if cfg.image else 0).to(dev)
-    opt = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=0.0)
+    opt = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=0.0, eps=1e-6)   # ZR: transformers AdamW
     n_batches = math.ceil(train.n / cfg.batch) if cfg.listwise == 0 else len(batches(train, cfg, np.random.default_rng(0)))
     steps = math.ceil(n_batches * cfg.epochs / cfg.accum)
-    sched = get_linear_schedule_with_warmup(opt, int(cfg.warmup * steps), steps)
+    sched = get_cosine_schedule_with_warmup(opt, int(cfg.warmup * steps), steps)          # ZR: --lr_scheduler_type cosine
     scaler = torch.amp.GradScaler("cuda", enabled=cfg.precision == "fp16")
     ema = EMA(model, cfg.ema) if cfg.ema else None
     dev_rows = evals.get("dev")
@@ -434,8 +454,7 @@ def run(cfg, write=True):
             b = {"x": train.batch(idx, cfg, dev), "w": torch.tensor(train.weight[idx]).to(dev),
                  "gain": torch.tensor(train.gain[idx]).to(dev), "y": torch.tensor(train.label[idx]).to(dev),
                  "q": torch.tensor(train.qid[idx]).to(dev),
-                 "soft": torch.tensor(train.soft[idx]).to(dev) if train.soft is not None and
-                 not np.isnan(train.soft[idx]).any() else None}
+                 "soft": torch.tensor(train.soft[idx]).to(dev) if train.soft is not None else None}
             reg, cls, loss = run_loss(model, b, cfg, scaler)
             running = 0.98 * running + 0.02 * loss.item() * cfg.accum
             adv = adversarial_step(model, b, cfg, scaler, reg, cls, running)
@@ -469,6 +488,10 @@ def run(cfg, write=True):
                 if step >= steps:
                     break
     gpu_h = (time.time() - t_train) / 3600
+    if dev_rows is None:                          # no dev evaluation (out-of-fold runs): keep the final (EMA) weights
+        if ema:
+            ema.swap(model)
+        torch.save({k: v.detach().cpu() for k, v in model.state_dict().items()}, out / "model.pt")
     model.load_state_dict(torch.load(out / "model.pt", map_location=dev))
     results, ms = {}, None
     for s, d in ev.items():
@@ -501,22 +524,20 @@ def predict_run(phase, name, split="final_test", rows=None):
     dst = out / f"scores_{split}.parquet"
     if rows is None and dst.exists():
         return pd.read_parquet(dst)
+    from mmsearch import cap_gpu
+    cap_gpu()
     cfg = Cfg(**json.loads((out / "cfg.json").read_text()))
     dev = torch.device("cuda")
     tok = AutoTokenizer.from_pretrained(cfg.backbone)
-    products = load_p1_products().set_index("product_id")
     r = rows if rows is not None else eval_rows(split, cfg)
     if "label" not in r:
         r = r.assign(label="I")
-    pr = products.loc[pd.Index(r["product_id"].unique())]
-    if cfg.order == "caption":
-        caps = pd.read_parquet(RUNS / "p5" / "captions.parquet").set_index("product_id")["caption"]
-        pr = pr.assign(caption=caps.reindex(pr.index).fillna(""))
+    products, fields = fields_for(cfg, r)
     store = None
     if cfg.image:
         from mmsearch.images import image_store
         store = image_store()
-    d = Data(cfg, r.reset_index(drop=True), tok, products, product_fields(pr, cfg.clean), store)
+    d = Data(cfg, r.reset_index(drop=True), tok, products, fields, store)
     model = CrossEncoder(cfg.backbone, cfg.head, cfg.side, cfg.msd, cfg.wpool, cfg.bag, 768 if cfg.image else 0).to(dev)
     model.load_state_dict(torch.load(out / "model.pt", map_location=dev))
     reg, p = predict(model, d, cfg, dev)
