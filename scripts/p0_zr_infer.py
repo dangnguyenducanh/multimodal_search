@@ -46,7 +46,10 @@ def main():
     ap.add_argument("--alias", default="", help="test only: c1=smoke_c2_fp16,r1=smoke_r1_fp16,...")
     ap.add_argument("--limit-queries", type=int, default=0, help="test only")
     ap.add_argument("--out", default=str(PRED))
+    ap.add_argument("--members", default=",".join(MEMBERS), help="subset, e.g. r1 (Phase 4 parity)")
+    ap.add_argument("--splits", default="dev,final_test")
     a = ap.parse_args()
+    members = a.members.split(",")
     alias = dict(kv.split("=") for kv in a.alias.split(",") if kv)
     out = Path(a.out).resolve()                     # setup_predictor() chdirs into their working dir
     out.mkdir(parents=True, exist_ok=True)
@@ -89,7 +92,7 @@ def main():
 
     if a.eval:
         timing = {}
-        for split in ["dev", "final_test"]:
+        for split in a.splits.split(","):
             test_query_df = pd.read_csv(DATA / f"{split}.csv")
             if a.limit_queries:
                 keep = test_query_df["query_id"].drop_duplicates().head(a.limit_queries)
@@ -111,7 +114,7 @@ def main():
                 if f.exists() and not a.limit_queries:
                     outputs[m] = pd.read_parquet(f).filter(like="s").to_numpy(dtype=np.float32)
                     continue
-                if not ready(m):
+                if m not in members or not ready(m):
                     continue
                 t0 = time.time()
                 fn = their_cls if m[0] == "c" else their_reg

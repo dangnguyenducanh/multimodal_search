@@ -49,6 +49,31 @@ def train_rows(ex):
     return tr[~tr["query_id"].isin(test_q)]
 
 
+GAIN = {"E": 1.0, "S": 0.1, "C": 0.01, "I": 0.0}
+
+
+def fold_of(query):
+    """Stable 10-way fold of a query text (docs/1.md proposal 1): md5, so every Python version agrees."""
+    return int(hashlib.md5(str(query).encode("utf8")).hexdigest(), 16) % 10
+
+
+def image_urls():
+    u = pd.concat([pd.read_parquet(SQID / "product_image_urls.parquet"),
+                   pd.read_parquet(SQID / "supp_product_image_urls.parquet")], ignore_index=True)
+    return u.dropna(subset=["image_url"]).drop_duplicates("product_id")
+
+
+def load_pairs(locales=("us",), splits_=("train", "dev", "final_test")):
+    """runs/p1/pairs.parquet (built by scripts/p1_build_data.py), filtered."""
+    p = pd.read_parquet(RUNS / "p1" / "pairs.parquet")
+    return p[p["locale"].isin(locales) & p["split"].isin(splits_)].reset_index(drop=True)
+
+
+def load_p1_products(locale="us"):
+    p = pd.read_parquet(RUNS / "p1" / "products.parquet")
+    return p[p["product_locale"] == locale].reset_index(drop=True)
+
+
 def query_slices(pairs, visual_words):
     """pairs: query_id, query, has_image (one row per judged pair) -> per-query slice labels (docs/0.md §0.1)."""
     q = pairs.groupby("query_id").agg(query=("query", "first"), all_imaged=("has_image", "all"))
